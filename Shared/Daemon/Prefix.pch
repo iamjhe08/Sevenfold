@@ -1,0 +1,4 @@
+// Sevenfold background service · BY: T4MAG0
+#ifdef __OBJC__
+    #import <Foundation/Foundation.h>
+#endif

@@ -1,0 +1,41 @@
+#!/bin/sh
+# Sevenfold post-install: (re)load the background service and refresh the app icon.
+
+DAEMON_LABEL="com.t4mag0.sevenfoldd"
+DAEMON_PLIST="@PREFIX@/Library/LaunchDaemons/${DAEMON_LABEL}.plist"
+APP_PATH="@PREFIX@/Applications/Sevenfold.app"
+
+chown root:wheel "$DAEMON_PLIST" 2>/dev/null || true
+chmod 0644 "$DAEMON_PLIST" 2>/dev/null || true
+
+LAUNCHCTL=""
+for candidate in @PREFIX@/bin/launchctl @PREFIX@/usr/bin/launchctl /bin/launchctl /usr/bin/launchctl /rootfs/bin/launchctl; do
+	if [ -x "$candidate" ]; then
+		LAUNCHCTL="$candidate"
+		break
+	fi
+done
+
+if [ -n "$LAUNCHCTL" ]; then
+	"$LAUNCHCTL" bootout "system/${DAEMON_LABEL}" 2>/dev/null || \
+		"$LAUNCHCTL" unload "$DAEMON_PLIST" 2>/dev/null || true
+	"$LAUNCHCTL" bootstrap system "$DAEMON_PLIST" 2>/dev/null || \
+		"$LAUNCHCTL" load "$DAEMON_PLIST" 2>/dev/null || true
+	"$LAUNCHCTL" kickstart -k "system/${DAEMON_LABEL}" 2>/dev/null || true
+fi
+
+# Close a running copy so the new version opens next time (no respring needed).
+for killer in @PREFIX@/usr/bin/killall /usr/bin/killall @PREFIX@/bin/killall; do
+	if [ -x "$killer" ]; then
+		"$killer" -9 Sevenfold 2>/dev/null || true
+		break
+	fi
+done
+
+if [ -x @PREFIX@/usr/bin/uicache ]; then
+	@PREFIX@/usr/bin/uicache -p "$APP_PATH" 2>/dev/null || true
+elif command -v uicache >/dev/null 2>&1; then
+	uicache -p "$APP_PATH" 2>/dev/null || true
+fi
+
+exit 0

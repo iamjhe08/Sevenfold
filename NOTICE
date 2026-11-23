@@ -1,0 +1,18 @@
+Sevenfold
+BY: T4MAG0
+
+Sevenfold's own code (app, signing pipeline, provisioning, Apple sign-in,
+developer-server client, background service) was written for this project.
+
+It is built with these third-party components, each under its own license
+(see the header of each file):
+
+- ldid (Shared/Engine/ldid) · Jay Freeman (saurik) · GNU AGPL-3.0
+  Because ldid is AGPL-3.0 and is built into the app, the app as a whole is
+  shared under the AGPL-3.0 too (see LICENSE).
+- libplist (Shared/Engine/libplist) · Nikias Bassen, Martin Szulecki, Zach C. · GNU LGPL-2.1
+- SSZipArchive and minizip (Shared/Engine/SSZipArchive) · MIT / zlib licenses
+- SAMKeychain (Shared/Engine/SAMKeychain) · Sam Soffes · MIT
+- NSData+GZIP (Shared/Engine/AppleServices) · Nick Lockwood · zlib license
+- OpenSSL (vendor) · OpenSSL license
+- Apple corecrypto and IOKit headers (Shared/include, Shared/Daemon/Headers) · Apple

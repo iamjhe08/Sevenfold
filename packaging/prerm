@@ -1,0 +1,19 @@
+#!/bin/sh
+# Sevenfold pre-remove: stop the background service.
+
+DAEMON_LABEL="com.t4mag0.sevenfoldd"
+DAEMON_PLIST="@PREFIX@/Library/LaunchDaemons/${DAEMON_LABEL}.plist"
+
+case "$1" in
+	remove|purge)
+		for candidate in @PREFIX@/bin/launchctl @PREFIX@/usr/bin/launchctl /bin/launchctl /usr/bin/launchctl /rootfs/bin/launchctl; do
+			if [ -x "$candidate" ]; then
+				"$candidate" bootout "system/${DAEMON_LABEL}" 2>/dev/null || \
+					"$candidate" unload "$DAEMON_PLIST" 2>/dev/null || true
+				break
+			fi
+		done
+		;;
+esac
+
+exit 0

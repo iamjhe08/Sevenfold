@@ -1,0 +1,30 @@
+Package: com.t4mag0.sevenfold
+Name: Sevenfold
+Version: @VERSION@
+Architecture: @ARCH@
+Description: Automatic app signing, powered by your Apple ID.
+ Sevenfold automates the signing of your sideloaded apps using your personal
+ Apple ID. Keep your apps signed with scheduled automatic renewals,
+ configurable conditions, and background signing—even while your device is
+ locked.
+ .
+ Features
+  • Automatic Signing — Schedule signing tasks with configurable Wi-Fi,
+    charging, and retry options.
+  • Batch Signing — Sign up to three apps simultaneously.
+  • Direct IPA Installation — Install .ipa files directly through Sevenfold.
+  • App ID Tracking — Monitor App ID usage for free Apple ID accounts.
+  • Shared Certificate — Use a single signing certificate across your devices.
+  • Server Fallback — Automatic fallback to an alternative sign-in server
+    when needed.
+  • Multilingual Support — Available in nine languages.
+  • Native iPad Support — Optimized interface designed for iPad.
+ .
+ Requirements
+  • iOS 15 or later
+  • Rootless or RootHide jailbreak
+Section: Applications
+Depends: firmware (>= 15.0), uikittools
+@PREDEPENDS@Author: T4MAG0
+Maintainer: T4MAG0
+Icon: file://@PREFIX@/Applications/Sevenfold.app/AppIcon60x60@2x.png
