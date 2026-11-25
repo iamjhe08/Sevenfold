@@ -1,6 +1,6 @@
 # Sevenfold
 
-**Automatic app signing, powered by your Apple ID.**
+**Automatic app signing.**
 
 Sevenfold keeps your sideloaded apps signed using your own Apple ID. It automatically renews signatures before they expire, following the schedule you configure — even while your device is locked. No computer or paid Apple Developer account required.
 
