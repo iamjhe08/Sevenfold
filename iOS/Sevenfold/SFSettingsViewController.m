@@ -596,7 +596,6 @@ static const NSUInteger SFMaxScheduleTimes = 6;
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == 0) return SFL(@"Anisette servers provide the device data Apple asks for at every sign-in and signing step. With automatic fallback on, a slow or failing server hands over to the next one.");
     if (section == 2 && !self.folded) return SFL(@"Drag to reorder. The server that worked last is tried first.");
-    if (section == 4) return SFL(@"The same identity iloader 2.4.2 uses.");
     return nil;
 }
 

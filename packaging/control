@@ -2,7 +2,7 @@ Package: com.t4mag0.sevenfold
 Name: Sevenfold
 Version: @VERSION@
 Architecture: @ARCH@
-Description: Automatic app signing, powered by your Apple ID.
+Description: Automatic app signing.
  Sevenfold automates the signing of your sideloaded apps using your personal
  Apple ID. Keep your apps signed with scheduled automatic renewals,
  configurable conditions, and background signing—even while your device is

@@ -1,6 +1,6 @@
 # Sevenfold changes
 
-## Build 20261126.0631
+## Build 20261126.0644
 
 - Sign-in screen: language and Anisette servers are now reachable from the top-right (globe + gear) even while signed out, so a wrong language or an unreachable server can't strand you on the login page.
 - Fixed the Sign in button doing nothing after a sign-in sheet was dismissed without completing.

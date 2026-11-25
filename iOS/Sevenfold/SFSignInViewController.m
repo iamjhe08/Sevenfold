@@ -188,11 +188,24 @@ static void SFPickTeam(UIViewController *presenter, NSArray *teams, void (^picke
 }
 
 - (void)openLanguage {
-    [self.navigationController pushViewController:[SFLanguageViewController new] animated:YES];
+    [self presentPanel:[SFLanguageViewController new]];
 }
 
 - (void)openAnisetteServers {
-    [self.navigationController pushViewController:[SFServersViewController new] animated:YES];
+    [self presentPanel:[SFServersViewController new]];
+}
+
+// Present over the login page (not pushed): the login page stays mounted underneath and
+// reliably reappears when the panel is closed. Pushing instead collapsed the sign-in view
+// on the way back (its scroll view tracks the keyboard layout guide).
+- (void)presentPanel:(UIViewController *)controller {
+    controller.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(dismissPanel)];
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:controller];
+    [self presentViewController:nav animated:YES completion:nil];
+}
+
+- (void)dismissPanel {
+    [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 - (BOOL)textFieldShouldReturn:(UITextField *)textField {
