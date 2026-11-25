@@ -4,6 +4,7 @@
 //
 
 #import "SFCertificateStore.h"
+#import "SFCertificateReminder.h"
 #import "SFLocalization.h"
 #import "SFDevice.h"
 #import "SFLog.h"
@@ -175,7 +176,10 @@ static NSDate *SFParseAppleDate(id value) {
                 if (aHere != bHere) return aHere ? NSOrderedAscending : NSOrderedDescending;
                 return [b.expirationDate ?: [NSDate distantPast] compare:a.expirationDate ?: [NSDate distantPast]];
             }];
-            dispatch_async(dispatch_get_main_queue(), ^{ completion(error ? nil : certificates, error); });
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (!error) [SFCertificateReminder updateWithCertificates:certificates];
+                completion(error ? nil : certificates, error);
+            });
         }];
     }];
 }

@@ -20,6 +20,8 @@
 #import "SFApplicationDatabase.h"
 #import "SFResources.h"
 #import "SFAppIDBudget.h"
+#import "SFAppIDsViewController.h"
+#import "SFCertificateReminder.h"
 #import "SFLanguageViewController.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
@@ -156,6 +158,7 @@ static id<SFWorkspace> SFWorkspaceShared(void) {
 @property (nonatomic, strong) UILabel *budgetCount;
 @property (nonatomic, strong) UIView *budgetFill;
 @property (nonatomic, strong) UIStackView *budgetView;
+@property (nonatomic, strong) UILabel *budgetNext;
 @property (nonatomic, strong) UIImageView *successCheck;
 @property (nonatomic, strong) UIView *successLine;
 @property (nonatomic, strong) UIView *successTrack;
@@ -198,11 +201,13 @@ static id<SFWorkspace> SFWorkspaceShared(void) {
     [center addObserver:self selector:@selector(reload) name:@"com.t4mag0.sevenfold/userDidSignIn" object:nil];
     [center addObserver:self selector:@selector(reload) name:UIApplicationWillEnterForegroundNotification object:nil];
     [center addObserver:self selector:@selector(updateBudget) name:SFAppIDBudgetDidChangeNotification object:nil];
+    [center addObserver:self selector:@selector(signAllRequested) name:SFSignAllRequestedNotification object:nil];
     [self reload];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
+    [SFCertificateReminder refreshIfDue];
     [self reload];
     [self updateBudget];
     if (![SFSigningSession shared].running) [[SFAppIDBudget shared] refreshForce:NO];
@@ -309,11 +314,20 @@ static id<SFWorkspace> SFWorkspaceShared(void) {
     self.budgetFill = [[UIView alloc] initWithFrame:CGRectZero];
     self.budgetFill.layer.cornerRadius = 2;
     [budgetTrack addSubview:self.budgetFill];
-    UIStackView *budget = [[UIStackView alloc] initWithArrangedSubviews:@[self.budgetCount, budgetCaption, budgetTrack]];
+    // When the next App IDs free up; tap the meter for the full list.
+    self.budgetNext = [SFTheme labelWithSize:11 weight:UIFontWeightMedium color:[UIColor colorWithRed:0.79 green:0.82 blue:0.92 alpha:1]];
+    self.budgetNext.numberOfLines = 1;
+    self.budgetNext.adjustsFontSizeToFitWidth = YES;
+    self.budgetNext.minimumScaleFactor = 0.7;
+    UIStackView *budget = [[UIStackView alloc] initWithArrangedSubviews:@[self.budgetCount, budgetCaption, budgetTrack, self.budgetNext]];
     budget.axis = UILayoutConstraintAxisVertical;
     budget.alignment = UIStackViewAlignmentTrailing;
     budget.spacing = 2;
     [budget setCustomSpacing:6 afterView:budgetCaption];
+    [budget setCustomSpacing:5 afterView:budgetTrack];
+    budget.userInteractionEnabled = YES;
+    budget.accessibilityTraits = UIAccessibilityTraitButton;
+    [budget addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(openAppIDs)]];
     [budget setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
     [budget setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
     self.budgetView = budget;
@@ -391,6 +405,19 @@ static id<SFWorkspace> SFWorkspaceShared(void) {
     BOOL rightToLeft = self.view.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
     self.budgetFill.frame = CGRectMake(rightToLeft ? 64 - width : 0, 0, width, 4);
     self.budgetFill.backgroundColor = color;
+    NSString *next = [SFAppIDsViewController nextFreeUpSummary];
+    self.budgetNext.text = next ? [next stringByAppendingString:[SFLanguage isRightToLeft] ? @" ‹" : @" ›"] : nil;
+    self.budgetNext.hidden = next == nil;
+}
+
+- (void)openAppIDs {
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[[SFAppIDsViewController alloc] initWithStyle:UITableViewStyleInsetGrouped]];
+    if (@available(iOS 15.0, *)) {
+        UISheetPresentationController *sheet = nav.sheetPresentationController;
+        sheet.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent];
+        sheet.prefersGrabberVisible = YES;
+    }
+    [self presentViewController:nav animated:YES completion:nil];
 }
 
 - (void)updateHeader {
@@ -594,6 +621,13 @@ static id<SFWorkspace> SFWorkspaceShared(void) {
 }
 
 // MARK: - Actions
+
+/// From Certificates › Renew: sign every app with the new certificate.
+- (void)signAllRequested {
+    if ([SFSigningSession shared].running || self.apps.count == 0) return;
+    [self.tabBarController setSelectedIndex:0];
+    [[SFSigningSession shared] signApplications:self.apps];
+}
 
 - (void)signAll {
     SFRootController *root = (SFRootController *)self.tabBarController;

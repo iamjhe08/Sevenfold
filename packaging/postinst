@@ -24,6 +24,15 @@ if [ -n "$LAUNCHCTL" ]; then
 	"$LAUNCHCTL" kickstart -k "system/${DAEMON_LABEL}" 2>/dev/null || true
 fi
 
+# Some jailbreaks ignore the reload above and keep the old service running.
+# Ending it makes launchd start the new binary straight away (KeepAlive).
+for killer in @PREFIX@/usr/bin/killall /usr/bin/killall @PREFIX@/bin/killall; do
+	if [ -x "$killer" ]; then
+		"$killer" -9 sevenfoldd 2>/dev/null || true
+		break
+	fi
+done
+
 # Close a running copy so the new version opens next time (no respring needed).
 for killer in @PREFIX@/usr/bin/killall /usr/bin/killall @PREFIX@/bin/killall; do
 	if [ -x "$killer" ]; then

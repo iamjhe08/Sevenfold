@@ -13,10 +13,12 @@
 NSString *const SFAppIDBudgetDidChangeNotification = @"SFAppIDBudgetDidChange";
 static NSString *const SFBudgetUsedKey = @"sfAppIDsUsed";
 static NSString *const SFBudgetUnlimitedKey = @"sfAppIDsUnlimited";
+static NSString *const SFBudgetFreeUpsKey = @"sfAppIDFreeUps";
 
 @interface SFAppIDBudget ()
 @property (nonatomic, readwrite) NSInteger used;
 @property (nonatomic, readwrite) BOOL unlimited;
+@property (nonatomic, readwrite, copy) NSArray<NSDictionary *> *freeUps;
 @property (nonatomic, strong) NSDate *checkedAt;
 @property (nonatomic) BOOL checking;
 @end
@@ -37,12 +39,40 @@ static NSString *const SFBudgetUnlimitedKey = @"sfAppIDsUnlimited";
         id saved = [defaults objectForKey:SFBudgetUsedKey];
         _used = [saved respondsToSelector:@selector(integerValue)] ? [saved integerValue] : -1;
         _unlimited = [defaults boolForKey:SFBudgetUnlimitedKey];
+        NSArray *ups = [defaults arrayForKey:SFBudgetFreeUpsKey];
+        _freeUps = [self futureOnly:ups];
     }
     return self;
 }
 
-- (void)publishUsed:(NSInteger)used unlimited:(BOOL)unlimited {
+/// Drops days that have already passed (a saved list can be days old).
+- (NSArray *)futureOnly:(NSArray *)ups {
+    NSDate *today = [[NSCalendar currentCalendar] startOfDayForDate:[NSDate date]];
+    NSMutableArray *keep = [NSMutableArray array];
+    for (NSDictionary *up in ups) {
+        if (![up isKindOfClass:[NSDictionary class]] || ![up[@"date"] isKindOfClass:[NSDate class]]) continue;
+        if ([up[@"date"] compare:today] != NSOrderedAscending) [keep addObject:up];
+    }
+    return keep;
+}
+
+/// Groups expiry moments by calendar day.
+static NSArray *SFGroupByDay(NSArray<NSDate *> *dates) {
+    NSCalendar *calendar = [NSCalendar currentCalendar];
+    NSMutableDictionary<NSDate *, NSNumber *> *days = [NSMutableDictionary dictionary];
+    for (NSDate *date in dates) {
+        NSDate *day = [calendar startOfDayForDate:date];
+        days[day] = @(days[day].integerValue + 1);
+    }
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDate *day in [days.allKeys sortedArrayUsingSelector:@selector(compare:)]) [out addObject:@{@"date": day, @"count": days[day]}];
+    return out;
+}
+
+- (void)publishUsed:(NSInteger)used unlimited:(BOOL)unlimited freeUps:(NSArray *)freeUps {
     dispatch_async(dispatch_get_main_queue(), ^{
+        self.freeUps = freeUps ?: @[];
+        [[NSUserDefaults standardUserDefaults] setObject:self.freeUps forKey:SFBudgetFreeUpsKey];
         self.used = used;
         self.unlimited = unlimited;
         [[NSUserDefaults standardUserDefaults] setObject:@(used) forKey:SFBudgetUsedKey];
@@ -77,7 +107,7 @@ static BOOL SFIsPaidTeam(NSDictionary *answer, NSString *team) {
             [apple listTeamsWithCompletionHandler:^(NSError *teamsError, NSDictionary *teams) {
                 if (!teamsError && SFIsPaidTeam(teams, team)) {
                     self.checkedAt = [NSDate date];
-                    [self publishUsed:0 unlimited:YES];
+                    [self publishUsed:0 unlimited:YES freeUps:@[]];
                     done();
                     return;
                 }
@@ -89,13 +119,14 @@ static BOOL SFIsPaidTeam(NSDictionary *answer, NSString *team) {
                         return;
                     }
                     NSInteger active = 0;
+                    NSMutableArray<NSDate *> *expiries = [NSMutableArray array];
                     for (NSDictionary *appID in appIDs) {
                         id expires = [appID isKindOfClass:[NSDictionary class]] ? appID[@"expirationDate"] : nil;
                         if ([expires isKindOfClass:[NSString class]]) {
                             NSISO8601DateFormatter *iso = [NSISO8601DateFormatter new];
                             expires = [iso dateFromString:expires];
                         }
-                        if ([expires isKindOfClass:[NSDate class]] && [expires timeIntervalSinceNow] > 0) active++;
+                        if ([expires isKindOfClass:[NSDate class]] && [expires timeIntervalSinceNow] > 0) { active++; [expiries addObject:expires]; }
                     }
                     if (active == 0 && appIDs.count) {
                         NSDictionary *first = [appIDs.firstObject isKindOfClass:[NSDictionary class]] ? appIDs.firstObject : @{};
@@ -103,7 +134,7 @@ static BOOL SFIsPaidTeam(NSDictionary *answer, NSString *team) {
                     }
                     self.checkedAt = [NSDate date];
                     SFLogEvent(SFLogLevelInfo, @"App IDs · %ld of 10 in use this week", (long)active);
-                    [self publishUsed:MIN(active, 10) unlimited:NO];
+                    [self publishUsed:MIN(active, 10) unlimited:NO freeUps:SFGroupByDay(expiries)];
                     done();
                 }];
             }];

@@ -17,6 +17,8 @@ static NSString *const SFXcodeApp = @"com.apple.gs.xcode.auth";
 @property (nonatomic, strong) SFGrandSlam *grandSlam;
 @property (nonatomic, strong) SFRemoteAnisetteProvider *anisetteProvider;
 @property (nonatomic, strong) AKAppleIDSession *nativeSession;
+/// Every anisette server failed: signing requests use this iPhone's own AuthKit data instead.
+@property (nonatomic) BOOL usingDeviceAnisette;
 @property (nonatomic, strong) NSDate *anisetteFetchedAt;
 
 // Kept between "code needed" and "code entered".
@@ -63,6 +65,14 @@ static NSString *const SFXcodeApp = @"com.apple.gs.xcode.auth";
     }
     [self prepareAnisetteWithCompletion:^(NSError *error) {
         self.anisetteFetchedAt = error ? nil : [NSDate date];
+        // No fallback to this iPhone's own AuthKit data here: tested on 1.0.0, Apple answers a session
+        // signed in with a server's identity but continued with the iPhone's own data with no team at
+        // all, which only hides the real problem. Report it plainly instead.
+        self.usingDeviceAnisette = NO;
+        if (error) {
+            NSString *text = @"No anisette server answered. Check your connection, or add a working server in Settings › Anisette servers.";
+            error = [NSError errorWithDomain:@"com.t4mag0.sevenfold.anisette" code:1 userInfo:@{ NSLocalizedDescriptionKey: text, NSUnderlyingErrorKey: error }];
+        }
         completion(error);
     }];
 }
@@ -72,14 +82,15 @@ static NSString *const SFXcodeApp = @"com.apple.gs.xcode.auth";
 }
 
 - (NSDictionary *)appleIDHeadersForRequest:(NSURLRequest *)request {
-    NSMutableDictionary *headers = [self.grandSlam.anisette mutableCopy];
+    NSMutableDictionary *headers = self.usingDeviceAnisette ? nil : [self.grandSlam.anisette mutableCopy];
     if (!headers.count) {
         // No remote anisette yet: use this iPhone's own AuthKit.
         if (!self.nativeSession) self.nativeSession = [[NSClassFromString(@"AKAppleIDSession") alloc] initWithIdentifier:SFXcodeApp];
         headers = [[self.nativeSession appleIDHeadersForRequest:request] mutableCopy] ?: [NSMutableDictionary dictionary];
     }
     headers[@"X-Apple-App-Info"] = SFXcodeApp;
-    if (self.grandSlam.clientInfo) headers[@"X-MMe-Client-Info"] = self.grandSlam.clientInfo;
+    // The device's own headers carry its own client info; don't mix in the server's Mac identity.
+    if (self.grandSlam.clientInfo && !self.usingDeviceAnisette && headers[@"X-Apple-I-MD"] && self.grandSlam.anisette.count) headers[@"X-MMe-Client-Info"] = self.grandSlam.clientInfo;
     return headers;
 }
 

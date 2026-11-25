@@ -46,8 +46,10 @@ static NSDictionary *SFLoadTable(NSString *code) {
         if (![text isKindOfClass:[NSString class]] || i < 0 || i >= (NSInteger)english.count) return;
         NSString *source = english[i];
         // A translation must keep the same placeholders, or formatting it could crash.
-        NSArray *a = [SFPlaceholders(source) sortedArrayUsingSelector:@selector(compare:)];
-        NSArray *b = [SFPlaceholders(text) sortedArrayUsingSelector:@selector(compare:)];
+        // Without positional "%1$…" markers the order must match too, or the values land in the wrong slots.
+        BOOL positional = [text containsString:@"$"];
+        NSArray *a = positional ? [SFPlaceholders(source) sortedArrayUsingSelector:@selector(compare:)] : SFPlaceholders(source);
+        NSArray *b = positional ? [SFPlaceholders(text) sortedArrayUsingSelector:@selector(compare:)] : SFPlaceholders(text);
         if (![a isEqualToArray:b]) { rejected++; return; }
         table[source] = text;
     }];

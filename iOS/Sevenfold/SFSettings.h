@@ -45,6 +45,8 @@ extern NSString *const SFSettingsDidChangeNotification;
 // Conditions
 + (BOOL)onlyOnWiFi;
 + (void)setOnlyOnWiFi:(BOOL)on;
++ (BOOL)signOnPlugIn;                   // "sfSignOnPlugIn", default YES
++ (void)setSignOnPlugIn:(BOOL)on;
 + (BOOL)onlyWhileCharging;
 + (void)setOnlyWhileCharging:(BOOL)on;
 + (BOOL)retryOnFailure;

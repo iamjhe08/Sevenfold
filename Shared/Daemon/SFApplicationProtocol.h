@@ -11,6 +11,8 @@
 
 /// It's time for a scheduled run.
 - (void)daemonDidRequestNewBackgroundSigning;
+/// The phone was just plugged in: sign apps that are about to expire, if any.
+- (void)daemonDidRequestPlugInSigning;
 /// The phone restarted: check the saved sign-in still works.
 - (void)daemonDidRequestCredentialsCheck;
 /// Show a notification that was waiting for the phone to be unlocked.

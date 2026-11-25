@@ -13,6 +13,8 @@
 #import "SFResources.h"
 #import "SFAppleServices.h"
 #import "SFNetworkAccess.h"
+#import "SFLanguageViewController.h"
+#import "SFSettingsViewController.h"
 
 static UITextField *SFField(NSString *placeholder) {
     UITextField *field = [UITextField new];
@@ -46,6 +48,7 @@ static void SFPickTeam(UIViewController *presenter, NSArray *teams, void (^picke
 #pragma mark - Sign in
 
 @interface SFSignInViewController () <UITextFieldDelegate>
+@property (nonatomic, weak) UITextField *activeField;
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UITextField *emailField;
 @property (nonatomic, strong) UITextField *passwordField;
@@ -60,6 +63,16 @@ static void SFPickTeam(UIViewController *presenter, NSArray *teams, void (^picke
     [super viewDidLoad];
     self.view.backgroundColor = [SFTheme background];
     self.navigationItem.backButtonTitle = SFL(@"Back");
+
+    // Reachable while signed out, so a wrong language or a down Anisette server can't trap the user here.
+    UIImage *globe = [[UIImage systemImageNamed:@"globe"] imageWithTintColor:[UIColor systemBlueColor] renderingMode:UIImageRenderingModeAlwaysOriginal];
+    UIImage *gear = [[UIImage systemImageNamed:@"gearshape"] imageWithTintColor:[SFTheme accent] renderingMode:UIImageRenderingModeAlwaysOriginal];
+    UIBarButtonItem *languageItem = [[UIBarButtonItem alloc] initWithImage:globe style:UIBarButtonItemStylePlain target:self action:@selector(openLanguage)];
+    languageItem.accessibilityLabel = SFL(@"Language");
+    UIBarButtonItem *serverItem = [[UIBarButtonItem alloc] initWithImage:gear style:UIBarButtonItemStylePlain target:self action:@selector(openAnisetteServers)];
+    serverItem.accessibilityLabel = SFL(@"Anisette servers");
+    // rightBarButtonItems[0] is the rightmost icon: gear on the right, globe just left of it.
+    self.navigationItem.rightBarButtonItems = @[serverItem, languageItem];
 
     UIScrollView *scroll = [UIScrollView new];
     scroll.translatesAutoresizingMaskIntoConstraints = NO;
@@ -151,6 +164,7 @@ static void SFPickTeam(UIViewController *presenter, NSArray *teams, void (^picke
 }
 
 - (void)textFieldDidBeginEditing:(UITextField *)textField {
+    self.activeField = textField;
     [self revealTypingArea];
 }
 
@@ -158,14 +172,27 @@ static void SFPickTeam(UIViewController *presenter, NSArray *teams, void (^picke
 - (void)revealTypingArea {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [self.view layoutIfNeeded];
-        UIView *target = self.continueButton;
-        CGRect rect = [self.scrollView convertRect:target.bounds fromView:target];
-        CGRect fieldRect = [self.scrollView convertRect:self.emailField.bounds fromView:self.emailField];
-        // Show from the Apple ID field down to the button when it fits, else the button.
-        CGRect wanted = CGRectUnion(fieldRect, rect);
-        if (wanted.size.height > self.scrollView.bounds.size.height - 24) wanted = rect;
+        UIView *field = self.activeField ?: self.emailField;
+        CGRect fieldRect = [self.scrollView convertRect:field.bounds fromView:field];
+        CGRect buttonRect = [self.scrollView convertRect:self.continueButton.bounds fromView:self.continueButton];
+        // Keep the field being typed in on screen. Show it through to the Continue button when
+        // that fits; otherwise keep the active field visible with a little room beneath it
+        // (so focusing Apple ID no longer jumps past it to the button).
+        CGRect wanted = CGRectUnion(fieldRect, buttonRect);
+        if (wanted.size.height > self.scrollView.bounds.size.height - 24) {
+            wanted = fieldRect;
+            wanted.size.height += 72;
+        }
         [self.scrollView scrollRectToVisible:CGRectInset(wanted, 0, -12) animated:YES];
     });
+}
+
+- (void)openLanguage {
+    [self.navigationController pushViewController:[SFLanguageViewController new] animated:YES];
+}
+
+- (void)openAnisetteServers {
+    [self.navigationController pushViewController:[SFServersViewController new] animated:YES];
 }
 
 - (BOOL)textFieldShouldReturn:(UITextField *)textField {

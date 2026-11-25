@@ -9,6 +9,8 @@
 //
 
 #import "SFCertificatesViewController.h"
+#import "SFCertificateReminder.h"
+#import "SFLog.h"
 #import "SFLocalization.h"
 #import "SFCertificateStore.h"
 #import "SFShareCertificateViewController.h"
@@ -377,6 +379,82 @@ static char SFSerialKey;
     [self.navigationController pushViewController:[SFShareCertificateViewController new] animated:YES];
 }
 
+// MARK: - Renew (last 14 days of this iPhone's certificate)
+
+/// This iPhone's certificate when it's in its last two weeks, else nil.
+- (SFCertificate *)renewCertificate {
+    for (SFCertificate *certificate in self.certificates) {
+        if (!certificate.usedByThisDevice || !certificate.expirationDate) continue;
+        NSTimeInterval left = certificate.expirationDate.timeIntervalSinceNow;
+        if (left > 0 && left < [SFCertificateReminder bannerDays] * 24 * 3600) return certificate;
+    }
+    return nil;
+}
+
+- (UITableViewCell *)renewCell:(SFCertificate *)certificate {
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    cell.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t) {
+        return t.userInterfaceStyle == UIUserInterfaceStyleDark ? [UIColor colorWithRed:0.23 green:0.16 blue:0.07 alpha:1] : [UIColor colorWithRed:1 green:0.95 blue:0.86 alpha:1];
+    }];
+    NSInteger days = MAX(1, (NSInteger)ceil(certificate.expirationDate.timeIntervalSinceNow / 86400.0));
+    NSDateFormatter *formatter = [NSDateFormatter new];
+    [formatter setLocalizedDateFormatFromTemplate:@"d MMM"];
+    UILabel *title = [SFTheme labelWithSize:15 weight:UIFontWeightBold color:[SFTheme warning]];
+    title.text = [NSString stringWithFormat:SFL(@"Expires in %ld days · %@"), (long)days, [formatter stringFromDate:certificate.expirationDate]];
+    title.numberOfLines = 0;
+    UILabel *body = [SFTheme labelWithSize:14 weight:UIFontWeightRegular color:[UIColor labelColor]];
+    body.text = SFL(@"Renewing replaces this certificate with a new one, then signs all your apps again so they keep working.");
+    body.numberOfLines = 0;
+    UIButtonConfiguration *config = [UIButtonConfiguration filledButtonConfiguration];
+    config.title = SFL(@"Renew and sign all apps");
+    config.baseBackgroundColor = [SFTheme amber];
+    config.baseForegroundColor = [UIColor colorWithWhite:0.07 alpha:1];
+    config.cornerStyle = UIButtonConfigurationCornerStyleLarge;
+    UIButton *button = [UIButton buttonWithConfiguration:config primaryAction:nil];
+    [button.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
+    [button addTarget:self action:@selector(renewTapped:) forControlEvents:UIControlEventTouchUpInside];
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[title, body, button]];
+    stack.axis = UILayoutConstraintAxisVertical;
+    stack.spacing = 10;
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    [cell.contentView addSubview:stack];
+    UILayoutGuide *m = cell.contentView.layoutMarginsGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [stack.topAnchor constraintEqualToAnchor:cell.contentView.topAnchor constant:14],
+        [stack.bottomAnchor constraintEqualToAnchor:cell.contentView.bottomAnchor constant:-14],
+        [stack.leadingAnchor constraintEqualToAnchor:m.leadingAnchor],
+        [stack.trailingAnchor constraintEqualToAnchor:m.trailingAnchor],
+    ]];
+    return cell;
+}
+
+- (void)renewTapped:(UIButton *)sender {
+    SFCertificate *certificate = [self renewCertificate];
+    if (!certificate) return;
+    NSString *message = SFL(@"Sevenfold revokes this certificate, makes a new one and signs all your apps again. Keep the app open until it finishes.");
+    if ([SFCertificateStore sharedWithCount] > 0) message = [message stringByAppendingFormat:@"\n\n%@", SFL(@"You shared this certificate with another iPhone. Afterwards, share the new one again from Certificates › Share with another iPhone.")];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:SFL(@"Renew certificate?")
+        message:message
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:SFL(@"Cancel") style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:SFL(@"Renew") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        sender.enabled = NO;
+        [SFCertificateStore revokeCertificate:certificate completion:^(NSError *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                sender.enabled = YES;
+                if (error) { [self showError:error title:SFL(@"Couldn't renew")]; return; }
+                SFLogEvent(SFLogLevelInfo, @"certificate · renewed by revoking the old one; signing all apps");
+                NSMutableSet *revoked = [self.revokedIdentifiers mutableCopy] ?: [NSMutableSet set];
+                [revoked addObject:certificate.identifier];
+                self.revokedIdentifiers = revoked;
+                [[NSNotificationCenter defaultCenter] postNotificationName:SFSignAllRequestedNotification object:nil];
+            });
+        }];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 // MARK: - Sections: 0 slots, 1…n certificates, last = devices
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
@@ -388,7 +466,7 @@ static char SFSerialKey;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    if (section == 0) return 1;
+    if (section == 0) return [self renewCertificate] ? 2 : 1;
     if ([self isDevicesSection:section]) return MAX(self.devices.count, 1);
     // header, created by, used by, apps here, expires, serial, then Share (if this iPhone uses it) and Revoke
     SFCertificate *certificate = self.certificates[section - 1];
@@ -489,7 +567,7 @@ static char SFSerialKey;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    if (indexPath.section == 0) return [self slotsCell];
+    if (indexPath.section == 0) return (indexPath.row == 0 && [self renewCertificate]) ? [self renewCell:[self renewCertificate]] : [self slotsCell];
 
     if ([self isDevicesSection:indexPath.section]) {
         if (self.devices.count == 0) return [self subtitleCellWithTitle:self.loading ? SFL(@"Loading…") : SFL(@"No iPhones registered yet") subtitle:nil];

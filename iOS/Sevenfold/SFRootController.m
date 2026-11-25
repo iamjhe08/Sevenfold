@@ -19,7 +19,7 @@
 #import "SFWelcomeViewController.h"
 
 @interface SFRootController ()
-@property (nonatomic) BOOL signInShowing;
+@property (nonatomic, weak) UINavigationController *signInNav;
 @property (nonatomic, strong) UIView *sidebar;
 @property (nonatomic, strong) NSArray<UIButton *> *sidebarButtons;
 @property (nonatomic) BOOL sidebarShown;
@@ -43,6 +43,7 @@ static const CGFloat SFSidebarWidth = 280;
     NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
     [center addObserver:self selector:@selector(signInRequested) name:@"com.t4mag0.sevenfold.show-sign-in" object:nil];
     [center addObserver:self selector:@selector(openApps) name:@"com.t4mag0.sevenfold/openApps" object:nil];
+    [center addObserver:self selector:@selector(openCertificates) name:@"com.t4mag0.sevenfold/openCertificates" object:nil];
 }
 
 - (UINavigationController *)navWithRoot:(UIViewController *)root title:(NSString *)title symbol:(NSString *)symbol {
@@ -51,6 +52,12 @@ static const CGFloat SFSidebarWidth = 280;
     nav.navigationBar.prefersLargeTitles = YES;
     nav.tabBarItem = [[UITabBarItem alloc] initWithTitle:title image:[UIImage systemImageNamed:symbol] tag:0];
     return nav;
+}
+
+- (void)openCertificates {
+    UINavigationController *nav = self.viewControllers.count > 1 ? (UINavigationController *)self.viewControllers[1] : nil;
+    if ([nav isKindOfClass:[UINavigationController class]]) [nav popToRootViewControllerAnimated:NO];
+    self.selectedIndex = 1;
 }
 
 #pragma mark - iPad sidebar
@@ -194,11 +201,12 @@ static const CGFloat SFSidebarWidth = 280;
 }
 
 - (void)presentSignIn {
-    if (self.signInShowing) return;
-    self.signInShowing = YES;
+    // Guard on the live presentation, not a stored flag: if the sheet was dismissed or never
+    // presented, signInNav.presentingViewController is nil and we present again (self-healing,
+    // so a sheet that closed without "finishing" can't leave the Sign in button dead).
+    if (self.signInNav.presentingViewController) return;
     SFSignInViewController *signIn = [SFSignInViewController new];
-    __weak SFRootController *weakSelf = self;
-    signIn.onFinish = ^{ weakSelf.signInShowing = NO; [SFSettings setFirstRunDone:YES]; };
+    signIn.onFinish = ^{ [SFSettings setFirstRunDone:YES]; };
     UINavigationController *nav = nil;
     if (![SFSettings firstRunDone]) {
         // First launch: the welcome guide, then sign-in replaces it in the same sheet.
@@ -215,6 +223,7 @@ static const CGFloat SFSidebarWidth = 280;
     }
     nav.modalPresentationStyle = UIModalPresentationFullScreen;
     nav.modalInPresentation = YES;
+    self.signInNav = nav;
     [[self topPresenter] presentViewController:nav animated:YES completion:nil];
 }
 

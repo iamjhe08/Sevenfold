@@ -320,7 +320,7 @@ static const NSUInteger SFMaxScheduleTimes = 6;
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == 0) {
         if (![SFSettings automaticSigning]) return SFL(@"Apps are only signed when you tap Sign now.");
-        return [NSString stringWithFormat:SFL(@"Next run: %@. If your iPhone is locked then, Sevenfold signs as soon as you unlock it."), [SFTheme shortDateTime:[SFSettings nextScheduledRun]]];
+        return [NSString stringWithFormat:SFL(@"Next run: %@. Sevenfold wakes and signs then, even if your iPhone is locked."), [SFTheme shortDateTime:[SFSettings nextScheduledRun]]];
     }
     if (section == 1) return SFL(@"Sevenfold signs at each of these times on the days you pick. Swipe left on a time to remove it.");
     if (section == 2) return SFL(@"If a run is postponed or fails, Sevenfold tries again every 30 minutes, up to 3 times.");
@@ -412,7 +412,7 @@ static const NSUInteger SFMaxScheduleTimes = 6;
     }
     switch (indexPath.row) {
         case 0: return [self switchCellWithTitle:SFL(@"Only on Wi-Fi") subtitle:SFL(@"Wait instead of using mobile data") on:[SFSettings onlyOnWiFi] action:@selector(wifiChanged:)];
-        case 1: return [self switchCellWithTitle:SFL(@"Only while charging") subtitle:SFL(@"Wait until the iPhone is plugged in") on:[SFSettings onlyWhileCharging] action:@selector(chargingChanged:)];
+        case 1: return [self switchCellWithTitle:SFL(@"Sign when plugged in") subtitle:[NSString stringWithFormat:SFL(@"When you connect a charger, sign any app that expires within %ld days"), (long)[SFResources expiryThresholdDays]] on:[SFSettings signOnPlugIn] action:@selector(chargingChanged:)];
         case 2: return [self switchCellWithTitle:SFL(@"Retry if it fails") subtitle:SFL(@"Every 30 minutes, up to 3 times") on:[SFSettings retryOnFailure] action:@selector(retryChanged:)];
         default: return [self switchCellWithTitle:SFL(@"Sign in Low Power Mode") subtitle:nil on:[SFSettings signInLowPowerMode] action:@selector(lowPowerChanged:)];
     }
@@ -481,7 +481,7 @@ static const NSUInteger SFMaxScheduleTimes = 6;
 }
 
 - (void)wifiChanged:(UISwitch *)sender { [SFSettings setOnlyOnWiFi:sender.on]; }
-- (void)chargingChanged:(UISwitch *)sender { [SFSettings setOnlyWhileCharging:sender.on]; }
+- (void)chargingChanged:(UISwitch *)sender { [SFSettings setSignOnPlugIn:sender.on]; }
 - (void)parallelChanged:(UISwitch *)sender { [SFSettings setParallelSigning:sender.on]; }
 - (void)retryChanged:(UISwitch *)sender { [SFSettings setRetryOnFailure:sender.on]; }
 - (void)lowPowerChanged:(UISwitch *)sender { [SFSettings setSignInLowPowerMode:sender.on]; }
@@ -523,52 +523,96 @@ static const NSUInteger SFMaxScheduleTimes = 6;
     }];
 }
 
+/// The server list starts folded: one row with the server in use. Remembered.
+- (BOOL)folded {
+    id saved = [[NSUserDefaults standardUserDefaults] objectForKey:@"sfServersFolded"];
+    return saved ? [saved boolValue] : YES;
+}
+
+- (void)toggleFolded {
+    [[NSUserDefaults standardUserDefaults] setBool:!self.folded forKey:@"sfServersFolded"];
+    [self.tableView performBatchUpdates:^{
+        [self.tableView reloadSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(1, 3)] withRowAnimation:UITableViewRowAnimationFade];
+    } completion:nil];
+}
+
+/// Status dot and text for a server ("Online · 212 ms", "Offline", …).
+- (void)statusForServer:(NSDictionary *)server text:(NSString **)text dot:(UIColor **)dot {
+    NSURL *parsed = [NSURL URLWithString:server[@"url"]];
+    NSDictionary *status = nil;
+    for (NSString *key in [SFAnisetteServers statuses]) if ([key containsString:parsed.host ?: @"-"]) status = [SFAnisetteServers statuses][key];
+    *text = SFL(@"Not tested");
+    *dot = [UIColor systemGrayColor];
+    if (self.testing) *text = SFL(@"Testing…");
+    else if (status) {
+        BOOL ok = [status[@"ok"] boolValue];
+        NSInteger ms = [status[@"ms"] integerValue];
+        if (!ok) { *text = SFL(@"Offline"); *dot = [SFTheme danger]; }
+        else if (ms > 3000) { *text = [NSString stringWithFormat:SFL(@"Slow · %ld ms"), (long)ms]; *dot = [SFTheme warning]; }
+        else { *text = [NSString stringWithFormat:SFL(@"Online · %ld ms"), (long)ms]; *dot = [SFTheme success]; }
+    }
+}
+
+- (UITableViewCell *)summaryCell {
+    NSDictionary *first = self.servers.firstObject ?: @{};
+    NSString *statusText; UIColor *dot;
+    [self statusForServer:first text:&statusText dot:&dot];
+    NSString *name = first[@"name"] ?: [NSURL URLWithString:first[@"url"]].host ?: @"—";
+    NSString *subtitle = [NSString stringWithFormat:SFL(@"In use · %@ · %ld servers"), statusText, (long)self.servers.count];
+    UITableViewCell *cell = [self subtitleCellWithTitle:name subtitle:subtitle];
+    UIListContentConfiguration *config = (UIListContentConfiguration *)cell.contentConfiguration;
+    config.image = [UIImage systemImageNamed:@"circle.fill"];
+    config.imageProperties.tintColor = dot;
+    config.imageProperties.maximumSize = CGSizeMake(10, 10);
+    cell.contentConfiguration = config;
+    UIImageView *chevron = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:self.folded ? @"chevron.down" : @"chevron.up"
+                                                                     withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:14 weight:UIImageSymbolWeightSemibold]]];
+    chevron.tintColor = [SFTheme secondaryText];
+    cell.editingAccessoryView = chevron;
+    cell.accessoryView = chevron;
+    cell.accessibilityHint = self.folded ? SFL(@"Shows all servers") : SFL(@"Hides the server list");
+    return cell;
+}
+
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return 4;
+    return 5;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     switch (section) {
         case 0: return 1;
-        case 1: return self.servers.count;
-        case 2: return 2;
+        case 1: return 1;
+        case 2: return self.folded ? 0 : self.servers.count;
+        case 3: return self.folded ? 0 : 2;
         default: return 1;
     }
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return @[@"", SFL(@"Order of use"), @"", SFL(@"Device identity sent to Apple")][section];
+    if (section == 1) return self.folded ? SFL(@"Servers") : SFL(@"Order of use");
+    return section == 4 ? SFL(@"Device identity sent to Apple") : nil;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == 0) return SFL(@"Anisette servers provide the device data Apple asks for at every sign-in and signing step. With automatic fallback on, a slow or failing server hands over to the next one.");
-    if (section == 1) return SFL(@"Drag to reorder. The server that worked last is tried first.");
-    if (section == 3) return SFL(@"The same identity iloader 2.4.2 uses.");
+    if (section == 2 && !self.folded) return SFL(@"Drag to reorder. The server that worked last is tried first.");
+    if (section == 4) return SFL(@"The same identity iloader 2.4.2 uses.");
     return nil;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     if (indexPath.section == 0) return [self switchCellWithTitle:SFL(@"Automatic fallback") subtitle:SFL(@"Switch to the next server if one stalls") on:[SFAnisetteServers automaticFallback] action:@selector(fallbackChanged:)];
-    if (indexPath.section == 2) {
+    if (indexPath.section == 1) return [self summaryCell];
+    if (indexPath.section == 3) {
         return indexPath.row == 0 ? [self buttonCellWithTitle:SFL(@"Add custom server") color:nil] : [self buttonCellWithTitle:SFL(@"Reset to defaults") color:[SFTheme secondaryText]];
     }
-    if (indexPath.section == 3) return [self valueCellWithTitle:SFL(@"Identity") value:@"MacBookPro13,3 · Mac OS X 10.12.6"];
+    if (indexPath.section == 4) return [self valueCellWithTitle:SFL(@"Identity") value:@"MacBookPro13,3 · Mac OS X 10.12.6"];
 
     NSDictionary *server = self.servers[indexPath.row];
     NSString *url = server[@"url"];
     NSURL *parsed = [NSURL URLWithString:url];
-    NSDictionary *status = nil;
-    for (NSString *key in [SFAnisetteServers statuses]) if ([key containsString:parsed.host ?: @"-"]) status = [SFAnisetteServers statuses][key];
-    NSString *statusText = SFL(@"Not tested");
-    UIColor *dot = [UIColor systemGrayColor];
-    if (self.testing) statusText = SFL(@"Testing…");
-    else if (status) {
-        BOOL ok = [status[@"ok"] boolValue];
-        NSInteger ms = [status[@"ms"] integerValue];
-        if (!ok) { statusText = SFL(@"Offline"); dot = [SFTheme danger]; }
-        else if (ms > 3000) { statusText = [NSString stringWithFormat:SFL(@"Slow · %ld ms"), (long)ms]; dot = [SFTheme warning]; }
-        else { statusText = [NSString stringWithFormat:SFL(@"Online · %ld ms"), (long)ms]; dot = [SFTheme success]; }
-    }
+    NSString *statusText; UIColor *dot;
+    [self statusForServer:server text:&statusText dot:&dot];
     UITableViewCell *cell = [self subtitleCellWithTitle:[NSString stringWithFormat:@"%ld. %@", (long)indexPath.row + 1, server[@"name"] ?: parsed.host] subtitle:[NSString stringWithFormat:@"%@\n%@", parsed.host ?: url, statusText]];
     UIListContentConfiguration *config = (UIListContentConfiguration *)cell.contentConfiguration;
     config.image = [UIImage systemImageNamed:@"circle.fill"];
@@ -580,24 +624,24 @@ static const NSUInteger SFMaxScheduleTimes = 6;
 }
 
 - (BOOL)tableView:(UITableView *)tableView canMoveRowAtIndexPath:(NSIndexPath *)indexPath {
-    return indexPath.section == 1;
+    return indexPath.section == 2;
 }
 
 - (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath {
-    return indexPath.section == 1;
+    return indexPath.section == 2;
 }
 
 - (UITableViewCellEditingStyle)tableView:(UITableView *)tableView editingStyleForRowAtIndexPath:(NSIndexPath *)indexPath {
-    return indexPath.section == 1 && self.servers.count > 1 ? UITableViewCellEditingStyleDelete : UITableViewCellEditingStyleNone;
+    return indexPath.section == 2 && self.servers.count > 1 ? UITableViewCellEditingStyleDelete : UITableViewCellEditingStyleNone;
 }
 
 - (BOOL)tableView:(UITableView *)tableView shouldIndentWhileEditingRowAtIndexPath:(NSIndexPath *)indexPath {
-    return indexPath.section == 1;
+    return indexPath.section == 2;
 }
 
 - (NSIndexPath *)tableView:(UITableView *)tableView targetIndexPathForMoveFromRowAtIndexPath:(NSIndexPath *)source toProposedIndexPath:(NSIndexPath *)proposed {
-    if (proposed.section < 1) return [NSIndexPath indexPathForRow:0 inSection:1];
-    if (proposed.section > 1) return [NSIndexPath indexPathForRow:self.servers.count - 1 inSection:1];
+    if (proposed.section < 2) return [NSIndexPath indexPathForRow:0 inSection:2];
+    if (proposed.section > 2) return [NSIndexPath indexPathForRow:self.servers.count - 1 inSection:2];
     return proposed;
 }
 
@@ -606,19 +650,20 @@ static const NSUInteger SFMaxScheduleTimes = 6;
     [self.servers removeObjectAtIndex:source.row];
     [self.servers insertObject:server atIndex:destination.row];
     [self save];
-    dispatch_async(dispatch_get_main_queue(), ^{ [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:1] withRowAnimation:UITableViewRowAnimationNone]; });
+    dispatch_async(dispatch_get_main_queue(), ^{ [self.tableView reloadSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(1, 2)] withRowAnimation:UITableViewRowAnimationNone]; });
 }
 
 - (void)tableView:(UITableView *)tableView commitEditingStyle:(UITableViewCellEditingStyle)style forRowAtIndexPath:(NSIndexPath *)indexPath {
     if (style != UITableViewCellEditingStyleDelete) return;
     [self.servers removeObjectAtIndex:indexPath.row];
     [self save];
-    [tableView reloadSections:[NSIndexSet indexSetWithIndex:1] withRowAnimation:UITableViewRowAnimationAutomatic];
+    [tableView reloadSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(1, 2)] withRowAnimation:UITableViewRowAnimationAutomatic];
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.section != 2) return;
+    if (indexPath.section == 1) { [self toggleFolded]; return; }
+    if (indexPath.section != 3) return;
     if (indexPath.row == 1) {
         self.servers = [[SFAnisetteServers defaultServers] mutableCopy];
         [self save];
@@ -785,6 +830,7 @@ static const NSUInteger SFMaxScheduleTimes = 6;
 @end
 
 @implementation SFDiagnosticsViewController
+
 
 - (void)viewDidLoad {
     [super viewDidLoad];

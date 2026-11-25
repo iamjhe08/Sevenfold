@@ -117,6 +117,8 @@ HOOK_MESSAGE(id, UNUserNotificationCenter, initWithBundleIdentifier_, NSString *
     NSString *identifier = response.notification.request.identifier;
     if ([identifier hasPrefix:@"sf.failure"] || [identifier hasPrefix:@"sf.expiry"]) {
         [[NSNotificationCenter defaultCenter] postNotificationName:@"com.t4mag0.sevenfold/openApps" object:nil];
+    } else if ([identifier hasPrefix:@"sf.cert"]) {
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"com.t4mag0.sevenfold/openCertificates" object:nil];
     }
     completionHandler();
 }

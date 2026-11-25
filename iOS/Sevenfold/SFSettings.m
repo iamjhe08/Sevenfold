@@ -161,7 +161,10 @@ NSString *const SFSettingsDidChangeNotification = @"com.t4mag0.sevenfold/setting
 
 + (BOOL)onlyOnWiFi { return [self bool:@"sfOnlyWiFi" fallback:NO]; }
 + (void)setOnlyOnWiFi:(BOOL)on { [self set:@(on) key:@"sfOnlyWiFi"]; }
-+ (BOOL)onlyWhileCharging { return [self bool:@"sfOnlyCharging" fallback:NO]; }
++ (BOOL)signOnPlugIn { return [self bool:@"sfSignOnPlugIn" fallback:YES]; }
++ (void)setSignOnPlugIn:(BOOL)on { [self set:@(on) key:@"sfSignOnPlugIn"]; }
+// Replaced by "Sign when plugged in": an old "only while charging" setting is ignored.
++ (BOOL)onlyWhileCharging { return NO; }
 + (void)setOnlyWhileCharging:(BOOL)on { [self set:@(on) key:@"sfOnlyCharging"]; }
 + (BOOL)retryOnFailure { return [self bool:@"sfRetry" fallback:YES]; }
 + (void)setRetryOnFailure:(BOOL)on { [self set:@(on) key:@"sfRetry"]; }

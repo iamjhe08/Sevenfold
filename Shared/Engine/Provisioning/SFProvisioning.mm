@@ -19,6 +19,8 @@ extern "C" {
 #import "SFSigning.h"
 #import "SAMKeychain.h"
 #import "SFResources.h"
+#import <UIKit/UIKit.h>
+extern "C" CFTypeRef MGCopyAnswer(CFStringRef property);
 
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
@@ -223,6 +225,7 @@ static NSMutableArray *SFCertificateWaiters;   // completions waiting on a certi
 
     [self prepareTeam:teamIDCallback completion:^(NSError *error) {
         if (error) { fail(error); return; }
+        [self ensureThisDeviceRegisteredForSystem:systemType completion:^{
         [self certificateForSystem:systemType completion:^(NSError *certError, NSString *privateKey, NSDictionary *certificate) {
             if (certError) { fail(certError); return; }
             [self appIDFor:identifier name:applicationName binary:binaryLocation system:systemType completion:^(NSError *appError, NSString *appIdId, NSDictionary *entitlements) {
@@ -232,6 +235,43 @@ static NSMutableArray *SFCertificateWaiters;   // completions waiting on a certi
                     completionHandler(nil, profile, privateKey, certificate, entitlements);
                 }];
             }];
+        }];
+        }];
+    }];
+}
+
+#pragma mark - Step 1b: this iPhone is still registered
+
+static NSDate *SFDeviceCheckedAt;
+
+/// Apple can drop a phone from the account's device list; profiles made after that
+/// no longer include it and signing on it fails. Check once per run (at most every
+/// 10 minutes) and register the phone again if it's missing. Never blocks signing.
+- (void)ensureThisDeviceRegisteredForSystem:(SFSystemType)system completion:(void (^)(void))completion {
+    if (system != SFSystemTypeiOS) { completion(); return; }
+    @synchronized ([SFProvisioning class]) {
+        if (SFDeviceCheckedAt && -SFDeviceCheckedAt.timeIntervalSinceNow < 600) { completion(); return; }
+        SFDeviceCheckedAt = [NSDate date];
+    }
+    NSString *udid = CFBridgingRelease(MGCopyAnswer(CFSTR("UniqueDeviceID")));
+    if (udid.length == 0) { completion(); return; }
+    SFAppleServices *apple = [SFAppleServices sharedInstance];
+    [apple listDevicesForTeamID:SFTeam() systemType:system withCompletionHandler:^(NSError *transport, NSDictionary *plist) {
+        NSArray *entries = plist[@"devices"] ?: plist[@"data"];
+        if (transport || ![entries isKindOfClass:[NSArray class]]) { completion(); return; }
+        for (NSDictionary *entry in entries) {
+            if (![entry isKindOfClass:[NSDictionary class]]) continue;
+            NSDictionary *attributes = [entry[@"attributes"] isKindOfClass:[NSDictionary class]] ? entry[@"attributes"] : entry;
+            NSString *number = SFString(attributes[@"deviceNumber"] ?: attributes[@"udid"]);
+            if ([number caseInsensitiveCompare:udid] == NSOrderedSame) { completion(); return; }
+        }
+        SFLogEvent(SFLogLevelWarning, @"device · this iPhone was missing from the Apple ID's device list, registering it again");
+        NSString *name = [UIDevice currentDevice].name ?: @"iPhone";
+        [apple addDevice:udid deviceName:name forTeamID:SFTeam() systemType:system withCompletionHandler:^(NSError *addTransport, NSDictionary *result) {
+            NSError *addError = SFCheck(@"Register device", addTransport, result);
+            if (addError) SFLogEvent(SFLogLevelError, @"device · couldn't register this iPhone again: %@", addError.localizedDescription);
+            else SFLogEvent(SFLogLevelOK, @"device · this iPhone is registered again");
+            completion();
         }];
     }];
 }

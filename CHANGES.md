@@ -1,5 +1,53 @@
 # Sevenfold changes
 
+## Build 20261126.0631
+
+- Sign-in screen: language and Anisette servers are now reachable from the top-right (globe + gear) even while signed out, so a wrong language or an unreachable server can't strand you on the login page.
+- Fixed the Sign in button doing nothing after a sign-in sheet was dismissed without completing.
+- Sign-in: the field you're typing in now stays above the keyboard on its own (no manual scrolling).
+- Schedule and Welcome text now say signing happens at the scheduled time even while the iPhone is locked, matching the iOS 18 fix.
+
+## Build 20261126.0102
+
+- When an anisette server reports an error, the log now shows the server's own message instead of "incomplete headers".
+
+## Build 20261126.0028
+
+- Tested and removed: signing in with this iPhone's own sign-in data. Apple refuses the sign-in ("This action cannot be completed"), so a device-only backup isn't possible; anisette always comes from the servers. Anyone who had the test switch on is put back on the servers automatically.
+
+## Build 20261126.0018
+
+- Tested and reverted: falling back to this iPhone's own AuthKit data when every anisette server fails. Apple answered "no developer team" (it doesn't accept the iPhone's own data for a session signed in through a server), which only hid the real problem. With no server answering, signing now fails with a clear message: "No anisette server answered. Check your connection, or add a working server in Settings › Anisette servers."
+
+## Build 20261125.0803
+
+- Fixed: Apple can drop an iPhone from the Apple ID's device list (seen with the 11 Pro), and Sevenfold only registered the phone when you signed in, so it stayed missing from Registered iPhones and its next signing could fail. Every signing run now checks (at most every 10 minutes) that this iPhone is still on the list and registers it again if not. Logged as "device · this iPhone was missing … registering it again".
+
+## Build 20261125.0749
+
+- New: when App IDs free up. Under the App ID meter, "+3 free on Thu ›"; tap the meter for a list of dates and how many free up each day (dates only: Apple doesn't say which app an App ID belonged to).
+- New: Sign when plugged in (Settings › Schedule › Conditions, on by default). Connecting a charger signs any app that expires within your threshold, at most once every 6 hours, following the Wi-Fi setting. Does nothing if no app is close to expiring.
+- Removed: "Only while charging" (scheduled runs always run on time now; an old setting is ignored).
+- New: certificate expiry reminder. Notifications 14, 3 and 1 day before this iPhone's certificate expires (10:00); tapping opens Certificates. In the last 14 days Certificates shows "Renew and sign all apps", which revokes the old certificate and signs every app with a new one. If the certificate was shared, you're reminded to share the new one.
+- Changed: Anisette servers list folds into one row (the server in use, its status and the server count). Tap to show all servers, reorder, add or reset; the choice is remembered.
+- Fixed: translations that put values in a different order could show them in the wrong places; such strings now need positional markers or fall back to English.
+
+## Build 20261124.1242
+
+- Fixed: installing an update didn't restart the background service on some jailbreaks (seen on Dopamine), so the old service kept running and newer service fixes never took effect. The installer now also ends the old service, and launchd starts the new one immediately. The service logs "Background service started (installed …)" when it starts, so you can confirm the update is live.
+
+## Build 20261124.1226
+
+- Fixed (real cause of "waits for unlock" on iOS 18): the signing timer only counted time the phone was awake, so when the phone slept through the planned time, the scheduled wake arrived while the timer still thought the run was minutes away; the phone went back to sleep and the run only happened when the screen next turned on. Now:
+  - a second timer follows the wall clock, so it is due the moment the phone wakes after the planned time;
+  - the background service listens for system wake and runs immediately if the planned time has passed;
+  - it holds the phone awake from the start of a scheduled run until the app finishes (released at the end, with the usual time limit).
+  New log lines: "Wall-clock timer reached the planned time", "System woke and the planned run is due".
+
+## Build 20261124.1207
+
+- Fixed: scheduled signing on newer iOS (seen on iOS 18) waiting for unlock instead of signing while locked. iOS refuses to start Sevenfold from scratch while the phone is locked, but resuming it when it's already in memory works. The background service now keeps Sevenfold quietly loaded (suspended, no battery assertion) after you unlock, lock, or the screen turns off, when a run is due within 36 hours. At run time it resumes the loaded app as before. If iOS has removed it from memory, the old behaviour (sign at next unlock) still applies. Logged in Background service activity as "Keeping Sevenfold ready for the next run".
+
 ## Build 20261123.1220
 
 - Changed: package Section is now "Applications" (Havoc rejected "Utilities"). No app changes.

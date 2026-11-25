@@ -12,6 +12,7 @@
 #import "SFNotificationManager.h"
 #import "SFConditions.h"
 #import "SFSettings.h"
+#import "SFSigningSession.h"
 #import "SFLog.h"
 #import "AppDelegate.h"
 
@@ -83,6 +84,32 @@ typedef NS_ENUM(NSInteger, SFAutoRunError) {
     self.running = YES;
     // "Sign all apps every run" signs everything; otherwise only apps close to expiring.
     [[SFApplicationSigning sharedInstance] signApplications:![SFSettings signAllEachRun]
+                                        thresholdForExpiration:[SFResources expiryThresholdDays]
+                                                    withTeamID:team username:identity password:token];
+}
+
+- (void)attemptPlugInSigningWithCompletion:(void (^)(NSError *))completionHandler {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self attemptPlugInSigningWithCompletion:completionHandler]; });
+        return;
+    }
+    NSString *team = [SFResources getTeamID], *identity = [SFResources getUsername], *token = [SFResources getPassword];
+    NSString *skip = nil;
+    if (self.running) skip = @"a run is already under way";
+    else if (![SFResources autoSignEnabled] || ![SFSettings signOnPlugIn]) skip = @"turned off";
+    else if (!team.length || !identity.length || !token.length) skip = @"not signed in";
+    else if ([SFConditions reasonToWait]) skip = [SFConditions reasonToWait];
+    else if (![self anyApplicationsNeedingSigning]) skip = @"no app is about to expire";
+    if (skip) {
+        SFLogEvent(SFLogLevelInfo, @"plugged in · nothing to do (%@)", skip);
+        if (completionHandler) completionHandler(nil);
+        return;
+    }
+    SFLogEvent(SFLogLevelInfo, @"plugged in · signing apps that are about to expire");
+    if (completionHandler) [self.waiting addObject:[completionHandler copy]];
+    [[SFSigningSession shared] markNextRunAutomatic];
+    self.running = YES;
+    [[SFApplicationSigning sharedInstance] signApplications:YES
                                         thresholdForExpiration:[SFResources expiryThresholdDays]
                                                     withTeamID:team username:identity password:token];
 }

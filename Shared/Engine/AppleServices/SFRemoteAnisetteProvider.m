@@ -351,7 +351,8 @@ didCompleteWithError:(NSError *)error {
     NSString *OTP = JSON[@"X-Apple-I-MD"];
     NSString *routingInfo = [JSON[@"X-Apple-I-MD-RINFO"] description] ?: storedRoutingInfo;
     if (machineID.length == 0 || OTP.length == 0 || routingInfo.length == 0 || self.clientInfo.length == 0) {
-        if (error) *error = SFAnisetteError(14, @"The anisette provider returned incomplete headers");
+        NSString *serverMessage = [JSON[@"message"] isKindOfClass:[NSString class]] ? JSON[@"message"] : nil;
+        if (error) *error = SFAnisetteError(14, serverMessage.length ? [@"The anisette server said: " stringByAppendingString:serverMessage] : @"The anisette provider returned incomplete headers");
         return nil;
     }
 
@@ -491,6 +492,9 @@ didCompleteWithError:(NSError *)error {
 
 - (void)fetchAnisetteDataWithCompletion:(void (^)(NSDictionary<NSString *, NSString *> * _Nullable headers,
                                                    NSError * _Nullable error))completion {
+    // Tested on 1.0.0: Apple refuses sign-in with this iPhone's own AuthKit identity
+    // ("This action cannot be completed"), so anisette always comes from the servers.
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"sfDeviceAnisette"];
     NSArray<NSString *> *servers = [SFAnisetteServers orderedServerURLs];
     [self fetchFromServers:servers index:0 lastError:nil completion:completion];
 }

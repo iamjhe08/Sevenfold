@@ -21,6 +21,9 @@
 #import "SFApplicationProtocol.h"
 #import <mach/mach_error.h>
 #import <notify.h>
+#import "Headers/IOKit/IOMessage.h"
+#import "Headers/IOKit/ps/IOPowerSources.h"
+#import "Headers/IOKit/ps/IOPSKeys.h"
 #import "Headers/IOKit/pwr_mgt/IOPMLibPrivate.h"
 
 #define SF_APP_ID      "com.t4mag0.sevenfold"
@@ -49,6 +52,7 @@ enum { SFAssertionReasonFinishTask = 4 };
 
 typedef NS_ENUM(NSUInteger, SFAppRequest) {
     SFAppRequestSign,
+    SFAppRequestSignPlugIn,
     SFAppRequestCheckSignIn,
     SFAppRequestShowQueued,
 };
@@ -105,6 +109,12 @@ static NSTimer *SFTimer(NSTimeInterval seconds, id target, SEL action) {
 
 // Schedule
 @property (nonatomic, strong) NSTimer *runTimer;
+/// Wall-clock twin of runTimer. NSTimer counts only awake time, so after the phone
+/// sleeps through the planned time it would still think the run is minutes away.
+@property (nonatomic, strong) dispatch_source_t runWallTimer;
+@property (nonatomic, strong) NSDate *lastRunAt;
+@property (nonatomic) BOOL onExternalPower;
+@property (nonatomic, strong) NSDate *lastPlugInRun;
 
 // Talking to the app
 @property (nonatomic, strong) NSXPCConnection *connection;
@@ -124,6 +134,7 @@ static NSTimer *SFTimer(NSTimeInterval seconds, id target, SEL action) {
 
 // Phone state
 @property (nonatomic) BOOL sawSpringBoardStart;
+@property (nonatomic, strong) NSDate *lastPrewarm;
 @end
 
 @implementation SFDaemonListener {
@@ -133,7 +144,12 @@ static NSTimer *SFTimer(NSTimeInterval seconds, id target, SEL action) {
 - (void)initialiseListener {
     SF_ON_MAIN([self initialiseListener]);
     self.waitingRequests = [NSMutableOrderedSet orderedSet];
+    NSString *binary = [NSProcessInfo processInfo].arguments.firstObject;
+    NSDate *built = [[NSFileManager defaultManager] attributesOfItemAtPath:binary error:nil].fileModificationDate;
+    SFServiceLog(@"Background service started (installed %@)", built);
     [self listenForSystemEvents];
+    [self listenForSleepAndWake];
+    [self listenForPowerSource];
     [self reloadSettings];
     [self armFromStoredDate];
 }
@@ -254,6 +270,7 @@ static NSTimer *SFTimer(NSTimeInterval seconds, id target, SEL action) {
     [self.runTimer invalidate];
     self.runTimer = SFTimer(MAX(seconds, 1), self, @selector(runTimerFired:));
     NSDate *when = self.runTimer.fireDate;
+    [self armWallTimerIn:MAX(seconds, 1)];
     [self saveSetting:@"nextFireDate" value:when];
     [self saveSetting:@"sfPlannedSchedule" value:[self scheduleSignature]];
 
@@ -264,9 +281,23 @@ static NSTimer *SFTimer(NSTimeInterval seconds, id target, SEL action) {
     [self scheduleWakeFor:when];
 }
 
+- (void)armWallTimerIn:(NSTimeInterval)seconds {
+    if (self.runWallTimer) dispatch_source_cancel(self.runWallTimer);
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(timer, dispatch_walltime(NULL, (int64_t)(seconds * NSEC_PER_SEC)), DISPATCH_TIME_FOREVER, NSEC_PER_SEC);
+    __weak SFDaemonListener *weakSelf = self;
+    dispatch_source_set_event_handler(timer, ^{
+        SFServiceLog(@"Wall-clock timer reached the planned time");
+        [weakSelf runTimerFired:weakSelf.runTimer ?: (id)@"wall"];
+    });
+    dispatch_resume(timer);
+    self.runWallTimer = timer;
+}
+
 - (void)disarm {
     [self.runTimer invalidate];
     self.runTimer = nil;
+    if (self.runWallTimer) { dispatch_source_cancel(self.runWallTimer); self.runWallTimer = nil; }
     [self cancelWakes];
 }
 
@@ -325,6 +356,9 @@ static NSTimer *SFTimer(NSTimeInterval seconds, id target, SEL action) {
             return;
         }
     }
+    // The NSTimer, the wall-clock timer and a system wake can all notice the same run.
+    if (self.lastRunAt && -self.lastRunAt.timeIntervalSinceNow < 90) { SFServiceLog(@"Run already started"); return; }
+    self.lastRunAt = [NSDate date];
     SFServiceLog(@"Scheduled time reached");
 
     if ([NSProcessInfo processInfo].isLowPowerModeEnabled && ![self signInLowPowerMode]) {
@@ -349,6 +383,7 @@ static NSTimer *SFTimer(NSTimeInterval seconds, id target, SEL action) {
     NSArray *names = @[@"Starting new background signing routine.", @"Requesting application to check login credentials.", @"Requesting application to notify users of a queued update."];
     SFServiceLog(@"%@", names[request]);
 
+    if (request == SFAppRequestSign || request == SFAppRequestSignPlugIn) [self keepPhoneAwake];   // a scheduled wake must not fall back asleep before the app connects
     int result = [self openAppInBackground];
     SFServiceLog(@"Opening Sevenfold in the background (%@)%@", result ? @"failed" : @"ok", self.connection ? @" · already connected" : @" · waiting for it to connect");
     if (result) SFServiceLog(@"Error launching application: %@", SBSApplicationLaunchingErrorString(result));
@@ -360,6 +395,7 @@ static NSTimer *SFTimer(NSTimeInterval seconds, id target, SEL action) {
 - (void)deliver:(SFAppRequest)request toProxy:(id<SFApplicationProtocol>)app {
     switch (request) {
         case SFAppRequestSign:        [app daemonDidRequestNewBackgroundSigning]; break;
+        case SFAppRequestSignPlugIn:  [app daemonDidRequestPlugInSigning]; break;
         case SFAppRequestCheckSignIn: [app daemonDidRequestCredentialsCheck]; break;
         case SFAppRequestShowQueued:  [app daemonDidRequestQueuedNotification]; break;
     }
@@ -495,6 +531,7 @@ static NSTimer *SFTimer(NSTimeInterval seconds, id target, SEL action) {
         uint64_t locked = UINT64_MAX;
         notify_get_state(token, &locked);
         if (locked == 0) [weakSelf phoneUnlocked];
+        else [weakSelf prewarmAppBecause:@"locked"];
     });
     notify_register_dispatch("SBSpringBoardDidLaunchNotification", &_springBoardToken, main, ^(int token) {
         [weakSelf springBoardStarted];
@@ -511,13 +548,107 @@ static NSTimer *SFTimer(NSTimeInterval seconds, id target, SEL action) {
     });
 }
 
+#pragma mark - System sleep and wake
+
+static io_connect_t SFRootPort = MACH_PORT_NULL;
+void IONotificationPortSetDispatchQueue(IONotificationPortRef notify, dispatch_queue_t queue);
+
+static void SFPowerCallback(void *refcon, io_service_t service, natural_t messageType, void *messageArgument) {
+    SFDaemonListener *listener = (__bridge SFDaemonListener *)refcon;
+    switch (messageType) {
+        case kIOMessageCanSystemSleep:
+        case kIOMessageSystemWillSleep:
+            IOAllowPowerChange(SFRootPort, (long)messageArgument);
+            break;
+        case kIOMessageSystemHasPoweredOn: {
+            dispatch_async(dispatch_get_main_queue(), ^{ [listener systemWoke]; });
+            break;
+        }
+        default: break;
+    }
+}
+
+- (void)listenForSleepAndWake {
+    IONotificationPortRef port = NULL;
+    io_object_t notifier = 0;
+    SFRootPort = IORegisterForSystemPower((__bridge void *)self, &port, SFPowerCallback, &notifier);
+    if (SFRootPort == MACH_PORT_NULL) { SFServiceLog(@"Could not listen for system wake"); return; }
+    IONotificationPortSetDispatchQueue(port, dispatch_get_main_queue());
+}
+
+/// Woken from sleep (by our scheduled wake or anything else): if the planned
+/// time has passed, run now instead of waiting for the screen to turn on.
+- (void)systemWoke {
+    NSDate *planned = self.settings[@"nextFireDate"];
+    if (![planned isKindOfClass:[NSDate class]]) return;
+    NSTimeInterval left = planned.timeIntervalSinceNow;
+    if (left <= 5) {
+        SFServiceLog(@"System woke and the planned run is due (%.0f s), running now", left);
+        [self runTimerFired:nil];
+    } else if (left < 15 * 60) {
+        [self armWallTimerIn:left];   // re-anchor to the wall clock
+    }
+}
+
+#pragma mark - Plugged in
+
+static BOOL SFIsOnExternalPower(void) {
+    CFTypeRef info = IOPSCopyPowerSourcesInfo();
+    if (!info) return NO;
+    CFStringRef type = IOPSGetProvidingPowerSourceType(info);
+    BOOL ac = type && CFStringCompare(type, CFSTR(kIOPSACPowerValue), 0) == kCFCompareEqualTo;
+    CFRelease(info);
+    return ac;
+}
+
+- (void)listenForPowerSource {
+    self.onExternalPower = SFIsOnExternalPower();
+    int token;
+    __weak SFDaemonListener *weakSelf = self;
+    notify_register_dispatch("com.apple.system.powersources.source", &token, dispatch_get_main_queue(), ^(int t) {
+        [weakSelf powerSourceChanged];
+    });
+}
+
+/// "Sign when plugged in": an extra chance to sign apps that are about to expire.
+/// The app decides whether anything needs signing; at most once every 6 hours.
+- (void)powerSourceChanged {
+    BOOL ac = SFIsOnExternalPower();
+    BOOL pluggedIn = ac && !self.onExternalPower;
+    self.onExternalPower = ac;
+    if (!pluggedIn) return;
+    id setting = self.settings[@"sfSignOnPlugIn"];
+    BOOL enabled = setting ? [setting boolValue] : YES;
+    if (!enabled || ![self autoSigningOn]) return;
+    if (self.lastPlugInRun && -self.lastPlugInRun.timeIntervalSinceNow < 6 * 3600) { SFServiceLog(@"Plugged in · checked less than 6 hours ago"); return; }
+    if (self.activeRun) return;
+    self.lastPlugInRun = [NSDate date];
+    SFServiceLog(@"Plugged in · asking Sevenfold to sign apps that are about to expire");
+    [self askApp:SFAppRequestSignPlugIn];
+}
+
 - (void)springBoardStarted {
     SFServiceLog(@"SpringBoard did start launching.");
     self.sawSpringBoardStart = YES;
 }
 
+/// Keeps Sevenfold resident (suspended, no assertion) so a run while the phone is
+/// locked can resume it. Newer iOS refuses a cold background launch while locked,
+/// but resuming an app that's already in memory works.
+- (void)prewarmAppBecause:(NSString *)reason {
+    if (![self autoSigningOn] || ![self wakeForRunsOn]) return;
+    if (self.connection || [self appPID]) return;                       // already resident
+    if (self.lastPrewarm && -self.lastPrewarm.timeIntervalSinceNow < 600) return;
+    NSDate *planned = self.settings[@"nextFireDate"];
+    if ([planned isKindOfClass:[NSDate class]] && planned.timeIntervalSinceNow > 36 * 3600) return;
+    self.lastPrewarm = [NSDate date];
+    int result = SBSLaunchApplicationWithIdentifier(CFSTR(SF_APP_ID), YES);   // suspended, invisible
+    SFServiceLog(@"Keeping Sevenfold ready for the next run (%@): %@", reason, result ? (__bridge NSString *)SBSApplicationLaunchingErrorString(result) : @"ok");
+}
+
 - (void)phoneUnlocked {
     SFServiceLog(@"Device was unlocked.");
+    [self prewarmAppBecause:@"unlocked"];
 
     // A run that couldn't reach the app while locked goes now.
     if (self.retryAtUnlock) {
@@ -545,6 +676,7 @@ static NSTimer *SFTimer(NSTimeInterval seconds, id target, SEL action) {
     if (!on) {
         // The service stays alive while the screen is off, so the timer keeps running.
         SFServiceLog(@"Display turned off");
+        [self prewarmAppBecause:@"display off"];
         SFServiceLog(@"Keeping signing timer armed while display is off");
         return;
     }

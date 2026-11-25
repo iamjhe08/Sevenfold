@@ -280,6 +280,23 @@ static const NSUInteger SFReconnectLimit = 5;
     }];
 }
 
+- (void)daemonDidRequestPlugInSigning {
+    SF_ON_MAIN([self daemonDidRequestPlugInSigning]);
+    UIApplication *application = [UIApplication sharedApplication];
+    __block BOOL ended = NO;
+    __block UIBackgroundTaskIdentifier task = UIBackgroundTaskInvalid;
+    void (^end)(void) = ^{
+        if (ended) return;
+        ended = YES;
+        if (task != UIBackgroundTaskInvalid) { [application endBackgroundTask:task]; task = UIBackgroundTaskInvalid; }
+        [self doneWithTask];
+    };
+    task = [application beginBackgroundTaskWithName:@"Sevenfold plug-in signing" expirationHandler:end];
+    [[SFBackgroundSigningManager sharedInstance] attemptPlugInSigningWithCompletion:^(NSError *error) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), end);
+    }];
+}
+
 - (void)daemonDidRequestCredentialsCheck {
     SF_ON_MAIN([self daemonDidRequestCredentialsCheck]);
     NSLog(@"[Sevenfold] background service asked for a sign-in check");

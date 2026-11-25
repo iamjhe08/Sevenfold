@@ -19,5 +19,7 @@
 
 /// YES when an app is within the signing threshold.
 - (BOOL)anyApplicationsNeedingSigning;
+/// Plugged in: signs only apps expiring within the threshold; does nothing (quietly) if none are.
+- (void)attemptPlugInSigningWithCompletion:(void (^)(NSError *error))completionHandler;
 
 @end

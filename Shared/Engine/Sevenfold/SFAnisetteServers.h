@@ -22,6 +22,7 @@ extern NSString *const SFAkdUserAgent;
 + (void)setServers:(NSArray<NSDictionary *> *)servers;
 + (NSArray<NSDictionary *> *)defaultServers;
 
+/// Adds (or moves) a server to the top of the list and makes it the one tried first.
 + (BOOL)automaticFallback;
 + (void)setAutomaticFallback:(BOOL)enabled;
 

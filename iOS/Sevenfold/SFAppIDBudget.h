@@ -18,6 +18,8 @@ extern NSString *const SFAppIDBudgetDidChangeNotification;
 
 /// App IDs in use this week, or -1 when not known yet.
 @property (nonatomic, readonly) NSInteger used;
+/// When in-use App IDs free up: @{@"date": NSDate (start of day), @"count": NSNumber}, soonest first.
+@property (nonatomic, readonly, copy) NSArray<NSDictionary *> *freeUps;
 /// Paid developer accounts have no weekly limit: the meter is hidden.
 @property (nonatomic, readonly) BOOL unlimited;
 
